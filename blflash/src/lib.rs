@@ -20,6 +20,7 @@ use serial::{BaudRate, CharSize, FlowControl, Parity, SerialPort, SerialPortSett
 use std::{
     borrow::Cow,
     fs::{read, File},
+    os::unix::prelude::FileExt,
     path::PathBuf,
 };
 use structopt::StructOpt;
@@ -94,6 +95,18 @@ pub struct DumpOpt {
 }
 
 #[derive(StructOpt)]
+pub struct BinaryOpt {
+    /// Bin file
+    #[structopt(parse(from_os_str))]
+    pub image: PathBuf,
+    /// Don't skip if hash matches
+    #[structopt(short, long)]
+    pub force: bool,
+    #[structopt(flatten)]
+    pub boot: Boot2Opt,
+}
+
+#[derive(StructOpt)]
 pub enum Opt {
     /// Flash image to serial
     Flash(FlashOpt),
@@ -101,6 +114,8 @@ pub enum Opt {
     Check(CheckOpt),
     /// Dump the whole flash to a file
     Dump(DumpOpt),
+    // Generate binary instead of flashing
+    Binary(BinaryOpt),
 }
 
 impl Connection {
@@ -206,6 +221,30 @@ pub fn flash(opt: FlashOpt) -> Result<(), Error> {
     flasher.reset()?;
 
     log::info!("Success");
+
+    Ok(())
+}
+
+pub fn binary(opt: BinaryOpt) -> Result<(), Error> {
+    let chip = Bl602;
+    let image = read(&opt.image)?;
+    let image = read_image(&chip, &image)?;
+
+    let segments = opt.boot.get_segments(&chip, Vec::from(image))?;
+
+    let f = File::create("firmware.bin");
+    match f {
+        Ok(file) => {
+            for segment in segments {
+                file.write_at(&segment.data, segment.addr.into())?;
+            }
+
+            log::info!("Success");
+        }
+        Err(_) => {
+            log::error!("Could not open file for writing");
+        }
+    }
 
     Ok(())
 }
